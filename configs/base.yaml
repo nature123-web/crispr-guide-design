@@ -1,0 +1,41 @@
+seed: 42
+out_dir: runs/base
+
+data:
+  n_guides: 8000
+  val_fraction: 0.15
+  test_fraction: 0.15
+
+model:
+  n_filters: 128
+  # Parallel widths rather than a deep stack: a guide is only 20 nt, so depth
+  # exhausts the sequence quickly. These see 3-mers through 7-mers directly.
+  kernel_sizes: [3, 5, 7]
+  hidden_dim: 128
+  dropout: 0.2
+  # The biophysical branch carries absolute, position-specific quantities that
+  # a translation-invariant convolution cannot represent. Ablate with
+  # --no-features to see what it is worth.
+  use_features: true
+  use_positional: true
+
+offtarget:
+  max_mismatches: 4
+  # Non-canonical PAMs cut at reduced efficiency and are the usual source of
+  # unexpected off-target activity, so they are searched rather than ignored.
+  pam_variants: [GG, AG, GA]
+
+design:
+  min_gc: 0.25
+  max_gc: 0.80
+  top_n: 10
+
+train:
+  epochs: 40
+  batch_size: 64
+  lr: 0.001
+  weight_decay: 0.00001
+  warmup_steps: 100
+  grad_clip: 1.0
+  early_stopping_patience: 8
+  device: auto
