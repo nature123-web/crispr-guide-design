@@ -34,6 +34,8 @@ python -m src.train --config configs/base.yaml
 python -m src.train --config configs/base.yaml --no-features    # ablation
 python -m src.design --checkpoint runs/base/best.pt \
     --target-file gene.fa --genome-file genome.fa --top 10
+
+pytest    # 72 tests
 ```
 
 Real output from `src.design` on a 600 bp target against a 60 kb reference:
