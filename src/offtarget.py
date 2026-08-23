@@ -68,7 +68,9 @@ class OffTarget:
                 f"mm={self.n_mismatches} cfd={self.cfd_score:.4f}")
 
 
-def cfd_score(guide: str, target: str, pam: str = "GG") -> float:
+def cfd_score(guide: str, target: str, pam: str = "GG",
+              custom_matrix: Dict[Tuple[int, str, str], float] | None = None
+              ) -> float:
     """Cutting Frequency Determination score for a guide against a site.
 
     Returns a value in [0, 1]: 1.0 is a perfect match cutting at full
@@ -78,8 +80,11 @@ def cfd_score(guide: str, target: str, pam: str = "GG") -> float:
     it.
 
     The weights here reproduce the *shape* of the published CFD matrix. For
-    clinical or publication work, substitute the full experimentally measured
-    table from Doench et al. 2016; :func:`load_cfd_matrix` accepts it.
+    clinical or publication work, pass the full experimentally measured table
+    from Doench et al. 2016 as ``custom_matrix`` -- :func:`load_cfd_matrix`
+    reads it from the published CSV. Any ``(position, guide_base,
+    target_base)`` triple absent from the custom matrix falls back to the
+    built-in approximation, so a partial table is safe to use.
     """
     guide = guide.upper()
     target = target.upper()
@@ -96,8 +101,12 @@ def cfd_score(guide: str, target: str, pam: str = "GG") -> float:
     for index, (g, t) in enumerate(zip(guide, target)):
         if g == t:
             continue
-        weight = POSITION_WEIGHT[index] if index < len(POSITION_WEIGHT) else 0.5
-        weight *= SUBSTITUTION_MULTIPLIER.get((g, t), 1.0)
+        weight = None
+        if custom_matrix is not None:
+            weight = custom_matrix.get((index + 1, g, t))
+        if weight is None:
+            weight = POSITION_WEIGHT[index] if index < len(POSITION_WEIGHT) else 0.5
+            weight *= SUBSTITUTION_MULTIPLIER.get((g, t), 1.0)
         # Capped strictly below 1: a well-tolerated substitution at the 5' end
         # can push the product above 1, and clamping at exactly 1.0 would make
         # that mismatch entirely free -- two such mismatches would then score
@@ -107,7 +116,13 @@ def cfd_score(guide: str, target: str, pam: str = "GG") -> float:
 
 
 def load_cfd_matrix(path: str) -> Dict[Tuple[int, str, str], float]:
-    """Load a published CFD table: ``position,guide_base,target_base,score``."""
+    """Load a published CFD table: ``position,guide_base,target_base,score``.
+
+    ``position`` is 1-based from the 5' end of the protospacer, matching the
+    convention :func:`cfd_score` and the rest of this module use. Pass the
+    result as ``custom_matrix`` to :func:`cfd_score` or as ``cfd_matrix`` to
+    :class:`OffTargetSearcher` to use it in place of the built-in table.
+    """
     import csv
 
     matrix: Dict[Tuple[int, str, str], float] = {}
@@ -146,10 +161,15 @@ class OffTargetSearcher:
     """
 
     def __init__(self, reference: str, max_mismatches: int = 4,
-                 pam_variants: Iterable[str] = ("GG", "AG", "GA")) -> None:
+                 pam_variants: Iterable[str] = ("GG", "AG", "GA"),
+                 cfd_matrix: Dict[Tuple[int, str, str], float] | None = None
+                 ) -> None:
         self.reference = reference.upper()
         self.max_mismatches = max_mismatches
         self.pam_variants = tuple(pam_variants)
+        # Published CFD table from load_cfd_matrix(), or None to use the
+        # built-in approximation for every mismatch.
+        self.cfd_matrix = cfd_matrix
         # Block length from the pigeonhole bound; at least 4 so the index stays
         # selective enough to be worth consulting.
         self.seed_length = max(4, GUIDE_LENGTH // (max_mismatches + 1))
@@ -199,7 +219,8 @@ class OffTargetSearcher:
                                   ("-", reverse_complement(self.reference))):
             searcher = (self if strand == "+"
                         else OffTargetSearcher(reference, self.max_mismatches,
-                                               self.pam_variants))
+                                               self.pam_variants,
+                                               self.cfd_matrix))
             if strand == "-":
                 searcher.seed_length = self.seed_length
             results.extend(
@@ -233,7 +254,8 @@ class OffTargetSearcher:
             results.append(OffTarget(
                 sequence=site, pam=pam, position=start, strand=strand,
                 n_mismatches=mismatches, mismatch_positions=positions,
-                cfd_score=cfd_score(guide, site, pam),
+                cfd_score=cfd_score(guide, site, pam,
+                                    custom_matrix=self.cfd_matrix),
             ))
         return results
 

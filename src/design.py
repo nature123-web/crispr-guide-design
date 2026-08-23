@@ -22,7 +22,12 @@ import torch
 from .data import biophysical_features
 from .metrics import format_report
 from .model import build_model
-from .offtarget import OffTarget, OffTargetSearcher, aggregate_specificity
+from .offtarget import (
+    OffTarget,
+    OffTargetSearcher,
+    aggregate_specificity,
+    load_cfd_matrix,
+)
 from .sequence import (
     Guide,
     find_guides,
@@ -112,6 +117,7 @@ def design_guides(
     keep_rejected: bool = False,
     min_gc: float = 0.25,
     max_gc: float = 0.80,
+    cfd_matrix: dict | None = None,
 ) -> List[ScoredGuide]:
     """Full pipeline for one target sequence."""
     candidates = find_guides(target)
@@ -135,7 +141,7 @@ def design_guides(
         # of the work on guides that will never be ordered.
         passing.sort(key=lambda s: -s.efficiency)
         budget = min(len(passing), max(top_n * 3, 20))
-        searcher = OffTargetSearcher(genome, max_mismatches)
+        searcher = OffTargetSearcher(genome, max_mismatches, cfd_matrix=cfd_matrix)
         searcher.build_index()
         for candidate in passing[:budget]:
             hits = searcher.search(candidate.guide.sequence)
@@ -189,6 +195,10 @@ def main() -> None:
                         help="Reference sequence for off-target search.")
     parser.add_argument("--genome-file", default=None)
     parser.add_argument("--max-mismatches", type=int, default=4)
+    parser.add_argument("--cfd-matrix", default=None,
+                        help="CSV of position,guide_base,target_base,score "
+                             "(Doench et al. 2016) to replace the built-in "
+                             "CFD approximation.")
     parser.add_argument("--top", type=int, default=10)
     parser.add_argument("--show-rejected", action="store_true")
     parser.add_argument("--out", default=None, help="Write a TSV here.")
@@ -213,9 +223,10 @@ def main() -> None:
         print(f"reference for off-target search: {len(genome)} bp "
               f"(<= {args.max_mismatches} mismatches)")
 
+    cfd_matrix = load_cfd_matrix(args.cfd_matrix) if args.cfd_matrix else None
     scored = design_guides(
         target, model, device, genome, args.max_mismatches, args.top,
-        keep_rejected=args.show_rejected,
+        keep_rejected=args.show_rejected, cfd_matrix=cfd_matrix,
     )
     usable = [s for s in scored if not s.rejected]
     rejected = [s for s in scored if s.rejected]

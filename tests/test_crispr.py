@@ -25,6 +25,7 @@ from src.offtarget import (
     aggregate_specificity,
     cfd_score,
     hamming_distance,
+    load_cfd_matrix,
     summarise_off_targets,
 )
 from src.sequence import (
@@ -254,6 +255,44 @@ def test_cfd_rejects_length_mismatch():
         cfd_score("ACGT", "ACG")
 
 
+def test_load_cfd_matrix_reads_the_published_csv_format(tmp_path):
+    path = tmp_path / "cfd.csv"
+    path.write_text(
+        "position,guide_base,target_base,score\n"
+        "1,G,A,0.5\n"
+        "20,C,T,0.02\n"
+    )
+    matrix = load_cfd_matrix(str(path))
+    assert matrix[(1, "G", "A")] == pytest.approx(0.5)
+    assert matrix[(20, "C", "T")] == pytest.approx(0.02)
+
+
+def test_custom_cfd_matrix_overrides_the_builtin_table():
+    """The README promises load_cfd_matrix's table replaces the built-in
+    approximation; this checks it is actually consulted, not just parsed.
+    """
+    guide = GUIDE
+    target = mutate(guide, 0)                     # position 1, G -> A
+    builtin = cfd_score(guide, target, "AGG")
+
+    custom = {(1, "G", "A"): 0.5}
+    overridden = cfd_score(guide, target, "AGG", custom_matrix=custom)
+
+    assert overridden == pytest.approx(0.5)        # PAM activity 1.0 * 0.5
+    assert overridden != pytest.approx(builtin)
+
+
+def test_custom_cfd_matrix_falls_back_for_missing_entries():
+    """A partial table should not silently zero out unlisted mismatches."""
+    guide = GUIDE
+    target = mutate(guide, 5)                      # not in the custom matrix
+    custom = {(1, "G", "A"): 0.5}                  # unrelated entry only
+
+    builtin = cfd_score(guide, target, "AGG")
+    with_partial_matrix = cfd_score(guide, target, "AGG", custom_matrix=custom)
+    assert with_partial_matrix == pytest.approx(builtin)
+
+
 def test_hamming_distance_short_circuits():
     assert hamming_distance("AAAA", "AAAA") == 0
     assert hamming_distance("AAAA", "TTTT") == 4
@@ -293,6 +332,28 @@ def test_search_finds_a_planted_mismatched_site():
     found = [h for h in hits if h.position == 800 and h.strand == "+"]
     assert found and found[0].n_mismatches == 2
     assert found[0].mismatch_positions == [1, 9]     # 1-based
+
+
+def test_search_uses_a_custom_cfd_matrix_when_given():
+    """cfd_matrix passed to the searcher must reach every scored off-target,
+    including the reverse-strand path, which builds its own sub-searcher.
+    """
+    rng = np.random.default_rng(1)
+    guide = GUIDE
+    variant = mutate(guide, 0)                     # position 1, G -> A
+    reference = build_reference(rng, 2000)
+    reference = reference[:800] + variant + "AGG" + reference[823:]
+
+    custom = {(1, "G", "A"): 0.5}
+    hits = OffTargetSearcher(reference, max_mismatches=3,
+                             cfd_matrix=custom).search(guide)
+    found = [h for h in hits if h.position == 800 and h.strand == "+"]
+    assert found and found[0].cfd_score == pytest.approx(0.5)
+
+    without_matrix = OffTargetSearcher(reference, max_mismatches=3).search(guide)
+    default_hit = next(h for h in without_matrix
+                       if h.position == 800 and h.strand == "+")
+    assert default_hit.cfd_score != pytest.approx(0.5)
 
 
 def test_search_respects_the_mismatch_budget():

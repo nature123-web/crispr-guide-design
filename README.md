@@ -35,7 +35,7 @@ python -m src.train --config configs/base.yaml --no-features    # ablation
 python -m src.design --checkpoint runs/base/best.pt \
     --target-file gene.fa --genome-file genome.fa --top 10
 
-pytest    # 72 tests
+pytest    # 76 tests
 ```
 
 Real output from `src.design` on a 600 bp target against a 60 kb reference:
@@ -90,6 +90,13 @@ sites equivalent.
 Non-canonical PAMs (`NAG`, `NGA`) are searched too, at reduced weight. They cut
 inefficiently but they are the usual source of *unexpected* off-target activity,
 so ignoring them is how you get surprised.
+
+The built-in table reproduces the *shape* of the published CFD matrix, not the
+full experimentally measured one. `--cfd-matrix path/to/table.csv` on
+`src.design` (or `load_cfd_matrix` + the `cfd_matrix=`/`custom_matrix=`
+argument on `OffTargetSearcher`/`cfd_score` directly) substitutes the real
+Doench et al. 2016 table; any `(position, guide_base, target_base)` triple it
+doesn't cover falls back to the built-in approximation.
 
 ## Hard filters are hard
 
@@ -207,7 +214,7 @@ src/
   metrics.py    Spearman, precision@k, NDCG, top-guide efficiency
   train.py      training loop + feature baselines
   design.py     end-to-end: enumerate → filter → score → search → rank
-tests/          pytest suite (72 tests)
+tests/          pytest suite (76 tests)
 ```
 
 ## Scope
